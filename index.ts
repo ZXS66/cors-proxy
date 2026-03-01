@@ -9,6 +9,17 @@ import morgan from 'morgan';
 const app = express();
 const PORT = +(process.env.PORT || 3000);
 
+/** parse value as string array */
+const parseStrings = (value: string | string[] | undefined): string[] => {
+	if (typeof value === 'string') {
+		return value.split(',').map(v => v.trim()).filter(v => v.length > 0);
+	}
+	if (Array.isArray(value)) {
+		return value.map(v => v.trim()).filter(v => v.length > 0);
+	}
+	return [];
+}
+
 /** parse value (any type) as boolean, returns false if value is not a boolean or string */
 const parseBoolean = (value: string | boolean | undefined): boolean => {
 	if (typeof value === 'boolean') {
@@ -25,9 +36,9 @@ const parseBoolean = (value: string | boolean | undefined): boolean => {
 // 可根据需求修改以下配置
 const CONFIG = {
 	// 允许的来源，* 表示允许所有，也可以指定具体域名，多个以','分隔，如 https://johnzhu.cn,https://localhost:3000
-	ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS || '*',
+	ALLOWED_ORIGINS: parseStrings(process.env.ALLOWED_ORIGINS || '*'),
 	// 目标API域名（可选），如果设置则只允许代理到该域名，提高安全性
-	TARGET_DOMAINS: process.env.TARGET_DOMAINS || '',
+	TARGET_DOMAINS: parseStrings(process.env.TARGET_DOMAINS || ''),
 	// 是否启用请求日志
 	ENABLE_LOG: parseBoolean(process.env.ENABLE_LOG || 'true'),
 	// 请求超时时间（毫秒）
@@ -45,12 +56,20 @@ if (CONFIG.ENABLE_LOG) {
 }
 
 // CORS配置
-app.use(cors({
-	origin: CONFIG.ALLOWED_ORIGINS === '*' ? '*' : CONFIG.ALLOWED_ORIGINS.split(','),
-	methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-	allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
-	exposedHeaders: ['Set-Cookie'],
-	credentials: true
+// https://www.npmjs.com/package/cors#configuration-options
+app.use(cors((
+	req: express.Request,
+	callback: (err: any, corsOptions?: any) => void
+) => {
+	if (CONFIG.ALLOWED_ORIGINS?.length === 1 && CONFIG.ALLOWED_ORIGINS[0] === '*') {
+		return callback(null, true);
+	}
+	const origin = `${req.protocol}://${req.host}`;
+	if (CONFIG.ALLOWED_ORIGINS.includes(origin)) {
+		return callback(null, { origin, credentials: true });
+	} else {
+		callback(new Error('unmatched origin: ' + origin));
+	}
 }));
 
 // 处理OPTIONS预检请求
@@ -70,12 +89,10 @@ app.all(/^\/cors-proxy\/(.+)/, async (req, res) => {
 	try {
 		// 提取目标URL（去掉 /cors-proxy/ 前缀）
 		let targetUrl = req.originalUrl.replace(/^\/cors-proxy\//, '');
-
 		// 安全校验：如果配置了TARGET_DOMAINS，只允许代理到该域名列表中的域名
-		if (CONFIG.TARGET_DOMAINS) {
+		if (CONFIG.TARGET_DOMAINS?.length) {
 			const urlObj = new URL(targetUrl);
-			const allowedDomains = CONFIG.TARGET_DOMAINS.split(',').map(domain => domain.trim());
-			if (!allowedDomains.includes(urlObj.hostname)) {
+			if (!CONFIG.TARGET_DOMAINS.includes(urlObj.hostname)) {
 				console.warn(`Blocked request to disallowed domain: ${urlObj.hostname}`);
 				return res.status(403).json({
 					error: 'Forbidden',
@@ -133,7 +150,7 @@ app.all(/^\/cors-proxy\/(.+)/, async (req, res) => {
 app.listen(PORT, () => {
 	console.log(`CORS Proxy Server running on port ${PORT}`);
 	console.log(`Allowed Origins: ${CONFIG.ALLOWED_ORIGINS}`);
-	if (CONFIG.TARGET_DOMAINS) {
+	if (CONFIG.TARGET_DOMAINS?.length) {
 		console.log(`Restricted to target domains: ${CONFIG.TARGET_DOMAINS}`);
 	}
 	console.log(`Server started at: ${new Date().toISOString()}`);
