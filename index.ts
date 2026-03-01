@@ -36,7 +36,7 @@ const parseBoolean = (value: string | boolean | undefined): boolean => {
 // 可根据需求修改以下配置
 const CONFIG = {
 	// 允许的来源，* 表示允许所有，也可以指定具体域名，多个以','分隔，如 https://johnzhu.cn,https://localhost:3000
-	ALLOWED_ORIGINS: parseStrings(process.env.ALLOWED_ORIGINS || '*'),
+	ALLOWED_HOSTS: parseStrings(process.env.ALLOWED_HOSTS || '*'),
 	// 目标API域名（可选），如果设置则只允许代理到该域名，提高安全性
 	TARGET_DOMAINS: parseStrings(process.env.TARGET_DOMAINS || ''),
 	// 是否启用请求日志
@@ -61,11 +61,11 @@ app.use(cors((
 	req: express.Request,
 	callback: (err: any, corsOptions?: any) => void
 ) => {
-	if (CONFIG.ALLOWED_ORIGINS?.length === 1 && CONFIG.ALLOWED_ORIGINS[0] === '*') {
+	if (CONFIG.ALLOWED_HOSTS?.length === 1 && CONFIG.ALLOWED_HOSTS[0] === '*') {
 		return callback(null, true);
 	}
-	const origin = `${req.protocol}://${req.host}`;
-	if (CONFIG.ALLOWED_ORIGINS.includes(origin)) {
+	const origin = req.host;
+	if (CONFIG.ALLOWED_HOSTS.includes(origin)) {
 		return callback(null, { origin, credentials: true });
 	} else {
 		callback(new Error('unmatched origin: ' + origin));
@@ -77,15 +77,22 @@ app.use(cors((
 
 // ====================== 核心代理逻辑 ======================
 // 健康检查接口
-app.get('/cors-proxy/health', (req, res) => {
-	res.status(200).json({
-		status: 'ok',
-		timestamp: new Date().toISOString(),
-		port: PORT
-	});
+app.get('/cors-proxy/health', (req: express.Request, res: express.Response) => {
+	if (CONFIG.ALLOWED_HOSTS.includes(req.host)) {
+		res.status(200).json({
+			status: 'ok',
+			timestamp: new Date().toISOString(),
+			port: PORT
+		});
+	} else {
+		return res.status(403).json({
+			error: 'Forbidden',
+			message: 'Health check is not allowed from this origin'
+		});
+	}
 });
 // 通用代理接口
-app.all(/^\/cors-proxy\/(.+)/, async (req, res) => {
+app.all(/^\/cors-proxy\/(.+)/, async (req: express.Request, res: express.Response) => {
 	try {
 		// 提取目标URL（去掉 /cors-proxy/ 前缀）
 		let targetUrl = req.originalUrl.replace(/^\/cors-proxy\//, '');
@@ -149,7 +156,7 @@ app.all(/^\/cors-proxy\/(.+)/, async (req, res) => {
 // 启动服务器
 app.listen(PORT, () => {
 	console.log(`CORS Proxy Server running on port ${PORT}`);
-	console.log(`Allowed Origins: ${CONFIG.ALLOWED_ORIGINS}`);
+	console.log(`Allowed Origins: ${CONFIG.ALLOWED_HOSTS}`);
 	if (CONFIG.TARGET_DOMAINS?.length) {
 		console.log(`Restricted to target domains: ${CONFIG.TARGET_DOMAINS}`);
 	}
